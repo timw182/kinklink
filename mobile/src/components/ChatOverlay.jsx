@@ -25,7 +25,11 @@ export default function ChatOverlay({ open, onClose, partnerName }) {
   // Chronological message log, oldest → newest.
   const [messages, setMessages] = useState([]);
   const [sending, setSending] = useState(null); // key currently in-flight
+  // Fallback "this is me" id captured from the server's send response, so
+  // bubbles stay on the right side even if useAuth().user.id is unhydrated.
+  const [knownSelfId, setKnownSelfId] = useState(null);
   const scrollRef = useRef(null);
+  const selfId = user?.id ?? knownSelfId;
 
   // Open/close animation
   useEffect(() => {
@@ -78,15 +82,16 @@ export default function ChatOverlay({ open, onClose, partnerName }) {
 
   const handleSend = useCallback(async (key) => {
     if (sending) return;
-    if (!user?.id) return;
     setSending(key);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 
-    // Optimistic: insert a temp row immediately so the bubble appears
+    // Optimistic: insert a temp row immediately so the bubble appears.
+    // We don't gate on user.id — the server determines sender_id from the
+    // auth token, so the POST works even if the local user state is stale.
     const tempId = `temp-${Date.now()}`;
     setMessages((prev) => [...prev, {
       id: tempId,
-      sender_id: user.id,
+      sender_id: user?.id ?? null,
       key,
       sent_at: new Date().toISOString(),
       pending: true,
@@ -95,6 +100,7 @@ export default function ChatOverlay({ open, onClose, partnerName }) {
     try {
       const msg = await client.post('/mood/expression', { key });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      if (msg && msg.sender_id) setKnownSelfId(msg.sender_id);
       setMessages((prev) => prev.map((m) => {
         if (m.id !== tempId) return m;
         // Only swap in the server row when it actually carries an id; otherwise
@@ -161,7 +167,10 @@ export default function ChatOverlay({ open, onClose, partnerName }) {
             </View>
           ) : (
             messages.map((m) => {
-              const isMine = m.sender_id === user?.id;
+              // Pending optimistic bubbles are always mine; otherwise compare
+              // against selfId (useAuth's user.id or the fallback captured
+              // from a server send response).
+              const isMine = m.pending || (selfId != null && m.sender_id === selfId);
               const expr = EXPRESSION_BY_KEY[m.key];
               if (!expr) return null;
               return (

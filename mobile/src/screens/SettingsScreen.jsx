@@ -13,6 +13,7 @@ import {
   Dimensions,
   ScrollView,
 } from "react-native";
+import Constants from "expo-constants";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Path, Circle, Rect, G, Line } from "react-native-svg";
 import { useAuth } from "../context/useAuth";
@@ -486,7 +487,9 @@ export default function SettingsScreen({ navigation }) {
             ))}
           </View>
 
-          <Text style={styles.version}>v0.1 · Venn</Text>
+          <Text style={styles.version}>
+            v{Constants.expoConfig?.version || '0.0'} · Venn
+          </Text>
         </View>
 
         {/* ── Profile sheet ── */}
