@@ -47,8 +47,6 @@ function BehindCard({ idx, tx, ty }) {
 export default function CardStack({ items = [], onRespond, matchItem, onUndo, availableHeight = 0 }) {
   const [localItems, setLocalItems] = useState(items);
   const [exiting, setExiting] = useState(false);
-  const [lastTag, setLastTag] = useState(null);
-  const tagTimer = useRef(null);
   const itemsRef = useRef(items);
   const respondingRef = useRef(false);
 
@@ -60,21 +58,12 @@ export default function CardStack({ items = [], onRespond, matchItem, onUndo, av
     if (!respondingRef.current) setLocalItems(items);
   }, [items]);
 
-  function showTag(response) {
-    clearTimeout(tagTimer.current);
-    const label = response === 'yes' ? '✓  Yes' : response === 'no' ? '✕  No' : '~  Maybe';
-    const color = response === 'yes' ? colors.yes : response === 'no' ? colors.no : colors.maybe;
-    setLastTag({ label, color });
-    tagTimer.current = setTimeout(() => setLastTag(null), 1200);
-  }
-
   function doRespond(response) {
     if (respondingRef.current || localItems.length === 0) return;
     respondingRef.current = true;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     setExiting(true);
     onRespond?.(localItems[0]?.id, response);
-    showTag(response);
 
     const targetX = response === 'yes' ? 500 : response === 'no' ? -500 : 0;
     const targetY = response === 'maybe' ? -500 : 0;
@@ -172,13 +161,6 @@ export default function CardStack({ items = [], onRespond, matchItem, onUndo, av
     <View style={styles.wrapper}>
       {matchItem && <MatchEffect item={matchItem} />}
 
-      {/* Swipe confirmation tag */}
-      {lastTag && (
-        <View style={[styles.swipeTag, { backgroundColor: lastTag.color }]}>
-          <Text style={styles.swipeTagText}>{lastTag.label}</Text>
-        </View>
-      )}
-
       {/* Card stack */}
       <View style={[styles.stack, { width: CARD_WIDTH, height: cardH }]}>
         {!exiting && localItems.slice(1, VISIBLE).map((item, i) => {
@@ -271,24 +253,6 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.2)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
-  },
-
-  swipeTag: {
-    paddingHorizontal: 24,
-    paddingVertical: 9,
-    borderRadius: radii.full,
-    zIndex: 200,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  swipeTagText: {
-    fontFamily: fonts.serifBold,
-    fontSize: 16,
-    color: '#fff',
-    letterSpacing: 1,
   },
 
   buttons: {

@@ -129,6 +129,17 @@ async def init_db():
                 purchased_at          TEXT    NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS expressions (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                couple_id  INTEGER NOT NULL REFERENCES couples(id),
+                sender_id  INTEGER NOT NULL REFERENCES users(id),
+                key        TEXT    NOT NULL,
+                sent_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_expressions_couple_id
+                ON expressions(couple_id, id DESC);
         """)
         await db.commit()
 

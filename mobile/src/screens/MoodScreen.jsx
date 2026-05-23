@@ -7,6 +7,7 @@ import { useAuth } from '../context/useAuth';
 import { useMatches } from '../context/MatchContext';
 import client from '../api/client';
 import SlideView from '../components/SlideView';
+import ChatOverlay from '../components/ChatOverlay';
 
 const IS_TABLET = Dimensions.get('window').width >= 768;
 
@@ -19,6 +20,7 @@ export default function MoodScreen() {
   const [picking, setPicking] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [chatOpen, setChatOpen] = useState(false);
   const toastTimer = useRef(null);
 
   useEffect(() => {
@@ -63,6 +65,7 @@ export default function MoodScreen() {
     setPicking(null);
   }
 
+
   const myMoodObj = MOODS.find((m) => m.key === myMood);
   const partnerMoodObj = MOODS.find((m) => m.key === partnerMood);
   const partnerName = user?.partnerName || 'Partner';
@@ -77,6 +80,24 @@ export default function MoodScreen() {
               <Text style={styles.title}>Mood</Text>
               <Text style={styles.subtitle}>Let your partner know how you're feeling.</Text>
             </View>
+
+            {/* Chat trigger — opens preset-expression overlay */}
+            {user?.coupleId && (
+              <TouchableOpacity
+                style={styles.chatTrigger}
+                onPress={() => setChatOpen(true)}
+                activeOpacity={0.85}
+              >
+                <View style={styles.chatTriggerIconWrap}>
+                  <Text style={styles.chatTriggerIcon}>💬</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.chatTriggerTitle}>Chat with {partnerName}</Text>
+                  <Text style={styles.chatTriggerHint}>Send a quick note — no typing</Text>
+                </View>
+                <Text style={styles.chatTriggerChevron}>→</Text>
+              </TouchableOpacity>
+            )}
 
             {/* Two-column layout on tablet: your mood + partner mood side by side */}
             <View style={IS_TABLET ? styles.tabletRow : styles.phoneCol}>
@@ -154,6 +175,12 @@ export default function MoodScreen() {
 
           </View>
         </ScrollView>
+
+        <ChatOverlay
+          open={chatOpen}
+          onClose={() => setChatOpen(false)}
+          partnerName={partnerName}
+        />
       </SafeAreaView>
     </SlideView>
   );
@@ -271,4 +298,43 @@ const styles = StyleSheet.create({
   emptyText: { fontFamily: fonts.sans, fontSize: 14, color: colors.textMuted, fontStyle: 'italic' },
 
   errorText: { fontFamily: fonts.sans, fontSize: 13, color: colors.no },
+
+  chatTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space[4],
+    paddingHorizontal: space[5],
+    paddingVertical: space[4],
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chatTriggerIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: radii.full,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatTriggerIcon: { fontSize: 22 },
+  chatTriggerTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    color: colors.text,
+    letterSpacing: -0.2,
+  },
+  chatTriggerHint: {
+    fontFamily: fonts.sansLight,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  chatTriggerChevron: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 22,
+    color: colors.accent,
+    marginLeft: space[1],
+  },
 });

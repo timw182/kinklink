@@ -6,7 +6,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from database import get_db
-from models import MoodRequest, MoodOut, CustomMessageRequest
+from models import MoodRequest, MoodOut, CustomMessageRequest, ExpressionRequest
 from routers.auth import _session_user_id
 from routers.deps import require_couple, get_partner_id
 
@@ -138,6 +138,61 @@ async def set_custom_message(body: CustomMessageRequest, request: Request, db: C
     })
 
     return {"ok": True}
+
+
+@router.post("/expression")
+@limiter.limit("20/minute")
+async def send_expression(body: ExpressionRequest, request: Request, db: Connection = Depends(get_db)):
+    """Send a preset expression to the partner and persist it as a chat message.
+
+    Server validates ``body.key`` against ``VALID_EXPRESSIONS`` so the chat
+    can never carry arbitrary text — only the closed set of preset keys.
+    Returns the created message so the sender can render it optimistically.
+    """
+    uid = await _session_user_id(request, db)
+    couple_id = await require_couple(db, uid)
+
+    cursor = await db.execute(
+        "INSERT INTO expressions (couple_id, sender_id, key) VALUES (?, ?, ?)",
+        (couple_id, uid, body.key),
+    )
+    msg_id = cursor.lastrowid
+    cur = await db.execute("SELECT sent_at FROM expressions WHERE id = ?", (msg_id,))
+    row = await cur.fetchone()
+    sent_at = row["sent_at"]
+    await db.commit()
+
+    await manager.broadcast(couple_id, {
+        "type": "expression",
+        "id": msg_id,
+        "key": body.key,
+        "from_user_id": uid,
+        "sent_at": sent_at,
+    })
+
+    return {
+        "id": msg_id,
+        "sender_id": uid,
+        "key": body.key,
+        "sent_at": sent_at,
+    }
+
+
+@router.get("/expressions")
+async def list_expressions(request: Request, db: Connection = Depends(get_db)):
+    """Return the couple's most recent expressions, chronological (oldest first)."""
+    uid = await _session_user_id(request, db)
+    couple_id = await require_couple(db, uid)
+    cur = await db.execute(
+        "SELECT id, sender_id, key, sent_at FROM expressions "
+        "WHERE couple_id = ? ORDER BY id DESC LIMIT 80",
+        (couple_id,),
+    )
+    rows = await cur.fetchall()
+    return [
+        {"id": r["id"], "sender_id": r["sender_id"], "key": r["key"], "sent_at": r["sent_at"]}
+        for r in reversed(rows)
+    ]
 
 
 @router.get("/message")

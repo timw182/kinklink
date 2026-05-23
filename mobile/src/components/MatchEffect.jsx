@@ -1,157 +1,157 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Dimensions, Animated, Easing } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { colors, fonts, radii, space } from '../theme/tokens';
+import { useAuth } from '../context/useAuth';
 
 const { width: SW } = Dimensions.get('window');
 
-const PARTICLE_COUNT = 18;
-const PARTICLE_COLORS = [
-  colors.violet, colors.accent, colors.coral, colors.rose,
-  colors.maybe, '#FFD700', colors.yes, '#FF6B9D',
-];
-
-function Particle({ delay, angle, distance, size, color }) {
-  const progress = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(progress, {
-      toValue: 1,
-      duration: 900,
-      delay,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, []);
-
-  const rad = (angle * Math.PI) / 180;
-  const dx = Math.cos(rad) * distance;
-  const dy = Math.sin(rad) * distance;
-
-  return (
-    <Animated.View
-      style={{
-        position: 'absolute',
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        backgroundColor: color,
-        opacity: progress.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0, 1, 0] }),
-        transform: [
-          { translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [0, dx] }) },
-          { translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [0, dy] }) },
-          { scale: progress.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 1.2, 0.3] }) },
-        ],
-      }}
-    />
-  );
-}
+// Circle sizing — tuned so the two circles plus overlap fit comfortably
+// inside the card area on the smallest phones.
+const CIRCLE_SIZE = Math.min(SW * 0.4, 150);
+const OVERLAP = CIRCLE_SIZE * 0.42; // lens width
+const DIAGRAM_WIDTH = CIRCLE_SIZE * 2 - OVERLAP;
 
 export default function MatchEffect({ item }) {
-  const scaleAnim = useRef(new Animated.Value(0)).current;
-  const opacityAnim = useRef(new Animated.Value(0)).current;
-  const emojiScale = useRef(new Animated.Value(0.3)).current;
-  const textY = useRef(new Animated.Value(20)).current;
-  const textOpacity = useRef(new Animated.Value(0)).current;
-  const ringScale = useRef(new Animated.Value(0)).current;
-  const ringOpacity = useRef(new Animated.Value(0.6)).current;
-  const glowPulse = useRef(new Animated.Value(0.4)).current;
-
-  const particles = useMemo(() =>
-    Array.from({ length: PARTICLE_COUNT }, (_, i) => ({
-      id: i,
-      angle: (360 / PARTICLE_COUNT) * i + (Math.random() * 20 - 10),
-      distance: 80 + Math.random() * 60,
-      size: 4 + Math.random() * 8,
-      color: PARTICLE_COLORS[i % PARTICLE_COLORS.length],
-      delay: 100 + Math.random() * 200,
-    })),
-  []);
+  const { user } = useAuth();
+  const partnerLabel = (user?.partnerName || '').trim().toLowerCase() || 'your person';
+  const backdrop = useRef(new Animated.Value(0)).current;
+  const leftX = useRef(new Animated.Value(-CIRCLE_SIZE * 2)).current;
+  const rightX = useRef(new Animated.Value(CIRCLE_SIZE * 2)).current;
+  const leftLabel = useRef(new Animated.Value(0)).current;
+  const rightLabel = useRef(new Animated.Value(0)).current;
+  const emojiScale = useRef(new Animated.Value(0)).current;
+  const contentOpacity = useRef(new Animated.Value(0)).current;
+  const contentY = useRef(new Animated.Value(14)).current;
+  const lensPulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    // Triple haptic burst
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy), 150);
-    setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium), 300);
+    setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium), 480);
 
-    // Backdrop fade in
-    Animated.timing(opacityAnim, {
-      toValue: 1, duration: 250, useNativeDriver: true,
+    // Backdrop
+    Animated.timing(backdrop, {
+      toValue: 1,
+      duration: 260,
+      useNativeDriver: true,
     }).start();
 
-    // Expanding ring
+    // Circles drift in from off-screen to settled overlap position
     Animated.parallel([
-      Animated.timing(ringScale, {
-        toValue: 1, duration: 700, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      Animated.timing(leftX, {
+        toValue: 0,
+        duration: 720,
+        delay: 160,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
       }),
-      Animated.timing(ringOpacity, {
-        toValue: 0, duration: 700, easing: Easing.in(Easing.ease), useNativeDriver: true,
+      Animated.timing(rightX, {
+        toValue: 0,
+        duration: 720,
+        delay: 160,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
       }),
     ]).start();
 
-    // Emoji pop-in with overshoot
+    // Labels appear with their circles
+    Animated.timing(leftLabel, {
+      toValue: 1,
+      duration: 320,
+      delay: 380,
+      useNativeDriver: true,
+    }).start();
+    Animated.timing(rightLabel, {
+      toValue: 1,
+      duration: 320,
+      delay: 460,
+      useNativeDriver: true,
+    }).start();
+
+    // Emoji pops in the intersection just as circles settle
     Animated.spring(emojiScale, {
-      toValue: 1, stiffness: 200, damping: 12, useNativeDriver: true,
+      toValue: 1,
+      stiffness: 200,
+      damping: 12,
+      delay: 700,
+      useNativeDriver: true,
     }).start();
 
-    // Content scale
-    Animated.spring(scaleAnim, {
-      toValue: 1, stiffness: 180, damping: 14, useNativeDriver: true,
-    }).start();
-
-    // Text slide up
-    Animated.sequence([
-      Animated.delay(200),
-      Animated.parallel([
-        Animated.spring(textY, {
-          toValue: 0, stiffness: 160, damping: 16, useNativeDriver: true,
-        }),
-        Animated.timing(textOpacity, {
-          toValue: 1, duration: 300, useNativeDriver: true,
-        }),
-      ]),
+    // Title + caption rise in
+    Animated.parallel([
+      Animated.timing(contentOpacity, {
+        toValue: 1,
+        duration: 360,
+        delay: 820,
+        useNativeDriver: true,
+      }),
+      Animated.spring(contentY, {
+        toValue: 0,
+        stiffness: 150,
+        damping: 16,
+        delay: 820,
+        useNativeDriver: true,
+      }),
     ]).start();
 
-    // Glow pulse loop
+    // Gentle lens pulse — keeps the intersection alive while overlay sits
     Animated.loop(
       Animated.sequence([
-        Animated.timing(glowPulse, { toValue: 0.7, duration: 800, useNativeDriver: true }),
-        Animated.timing(glowPulse, { toValue: 0.4, duration: 800, useNativeDriver: true }),
+        Animated.timing(lensPulse, { toValue: 1.06, duration: 1100, useNativeDriver: true }),
+        Animated.timing(lensPulse, { toValue: 1, duration: 1100, useNativeDriver: true }),
       ])
     ).start();
   }, []);
 
   return (
-    <Animated.View style={[styles.overlay, { opacity: opacityAnim }]}>
-      {/* Expanding ring */}
-      <Animated.View
-        style={[styles.ring, {
-          opacity: ringOpacity,
-          transform: [{ scale: ringScale.interpolate({ inputRange: [0, 1], outputRange: [0.2, 3] }) }],
-        }]}
-      />
+    <Animated.View style={[styles.overlay, { opacity: backdrop }]}>
+      <View style={styles.diagramArea}>
+        {/* Party labels */}
+        <View style={styles.labelRow}>
+          <Animated.Text
+            style={[
+              styles.partyLabel,
+              styles.partyLeft,
+              { opacity: leftLabel, transform: [{ translateY: leftLabel.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }] },
+            ]}
+          >
+            you
+          </Animated.Text>
+          <Animated.Text
+            style={[
+              styles.partyLabel,
+              styles.partyRight,
+              { opacity: rightLabel, transform: [{ translateY: rightLabel.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }] },
+            ]}
+          >
+            {partnerLabel}
+          </Animated.Text>
+        </View>
 
-      {/* Glow */}
-      <Animated.View style={[styles.glow, { opacity: glowPulse }]} />
+        {/* Venn diagram */}
+        <View style={styles.diagramRow}>
+          <Animated.View
+            style={[styles.circle, styles.circleLeft, { transform: [{ translateX: leftX }] }]}
+          />
+          <Animated.View
+            style={[styles.circle, styles.circleRight, { transform: [{ translateX: rightX }] }]}
+          />
 
-      {/* Particles */}
-      <View style={styles.particleCenter}>
-        {particles.map((p) => <Particle key={p.id} {...p} />)}
+          {/* Lens highlight + emoji at the intersection */}
+          <Animated.View style={[styles.lens, { transform: [{ scale: lensPulse }] }]}>
+            <Animated.Text style={[styles.emoji, { transform: [{ scale: emojiScale }] }]}>
+              {item.emoji}
+            </Animated.Text>
+          </Animated.View>
+        </View>
       </View>
 
-      {/* Content */}
-      <Animated.View style={[styles.content, { transform: [{ scale: scaleAnim }] }]}>
-        <Animated.Text style={[styles.emoji, { transform: [{ scale: emojiScale }] }]}>
-          {item.emoji}
-        </Animated.Text>
-
-        <Animated.View style={{ opacity: textOpacity, transform: [{ translateY: textY }] }}>
-          <Text style={styles.label}>It's a match</Text>
-          <Text style={styles.title}>{item.title}</Text>
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>You both want this</Text>
-          </View>
-        </Animated.View>
+      {/* Title + caption */}
+      <Animated.View
+        style={[styles.content, { opacity: contentOpacity, transform: [{ translateY: contentY }] }]}
+      >
+        <Text style={styles.overlapKicker}>your overlap</Text>
+        <Text style={styles.title}>{item.title}</Text>
       </Animated.View>
     </Animated.View>
   );
@@ -165,75 +165,90 @@ const styles = StyleSheet.create({
     zIndex: 100,
     borderRadius: radii.xl,
     overflow: 'hidden',
-    backgroundColor: 'rgba(26, 14, 46, 0.92)',
+    backgroundColor: colors.overlay,
   },
-  ring: {
-    position: 'absolute',
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    borderWidth: 3,
-    borderColor: colors.accent,
+
+  diagramArea: {
+    width: DIAGRAM_WIDTH,
+    alignItems: 'center',
+    marginBottom: space[6],
   },
-  glow: {
-    position: 'absolute',
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: colors.accent,
-    opacity: 0.4,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 60,
+
+  labelRow: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: space[3],
+    paddingHorizontal: CIRCLE_SIZE * 0.22,
   },
-  particleCenter: {
-    position: 'absolute',
-    width: 0,
-    height: 0,
+  partyLabel: {
+    fontFamily: fonts.sansLight,
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.7)',
+    letterSpacing: 2.2,
+    textTransform: 'lowercase',
+  },
+  partyLeft: { color: 'rgba(220,210,245,0.85)' },
+  partyRight: { color: 'rgba(245,210,225,0.85)' },
+
+  diagramRow: {
+    width: DIAGRAM_WIDTH,
+    height: CIRCLE_SIZE,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
-  content: {
+  circle: {
+    position: 'absolute',
+    width: CIRCLE_SIZE,
+    height: CIRCLE_SIZE,
+    borderRadius: CIRCLE_SIZE / 2,
+    top: 0,
+  },
+  circleLeft: {
+    left: 0,
+    backgroundColor: 'rgba(155,128,212,0.50)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(155,128,212,0.85)',
+  },
+  circleRight: {
+    right: 0,
+    backgroundColor: 'rgba(196,84,122,0.50)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(196,84,122,0.85)',
+  },
+  lens: {
+    position: 'absolute',
     alignItems: 'center',
-    gap: space[4],
+    justifyContent: 'center',
+    width: OVERLAP * 1.15,
+    height: CIRCLE_SIZE * 0.9,
   },
   emoji: {
-    fontSize: 72,
-    textShadowColor: 'rgba(0,0,0,0.3)',
-    textShadowOffset: { width: 0, height: 4 },
-    textShadowRadius: 12,
+    fontSize: Math.min(OVERLAP * 0.78, 48),
+    textShadowColor: 'rgba(0,0,0,0.45)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 8,
   },
-  label: {
+
+  content: {
+    alignItems: 'center',
+    paddingHorizontal: space[5],
+  },
+  overlapKicker: {
     fontFamily: fonts.sansMedium,
-    fontSize: 12,
-    color: colors.accent,
-    letterSpacing: 3,
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.55)',
+    letterSpacing: 2.6,
     textTransform: 'uppercase',
-    textAlign: 'center',
-    marginBottom: space[1],
+    marginBottom: space[2],
   },
   title: {
     fontFamily: fonts.serifBold,
-    fontSize: 28,
+    fontSize: 24,
     color: '#fff',
     textAlign: 'center',
     letterSpacing: -0.3,
-    marginBottom: space[2],
-  },
-  badge: {
-    alignSelf: 'center',
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-    borderRadius: radii.full,
-    paddingHorizontal: space[4],
-    paddingVertical: space[2],
-  },
-  badgeText: {
-    fontFamily: fonts.sans,
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.8)',
-    letterSpacing: 0.3,
   },
 });

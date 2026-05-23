@@ -1,4 +1,5 @@
-import { TouchableOpacity, Text, View, StyleSheet, Dimensions, ScrollView } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { TouchableOpacity, Text, View, StyleSheet, Dimensions, ScrollView, Animated } from 'react-native';
 import { CATEGORIES } from '../lib/constants';
 import { colors, fonts, radii, space } from '../theme/tokens';
 
@@ -15,13 +16,59 @@ const CATEGORY_TINT = {
   adventurous: { bg: 'rgba(240,192,160,0.22)', border: 'rgba(240,192,160,0.7)' },
 };
 
-export default function CategoryPicker({ active, onChange, progress = {} }) {
-  if (IS_TABLET) return <TabletPicker active={active} onChange={onChange} progress={progress} />;
-  return <PhonePicker active={active} onChange={onChange} progress={progress} />;
+export default function CategoryPicker({ active, onChange, progress = {}, overlayTag = null }) {
+  if (IS_TABLET) return <TabletPicker active={active} onChange={onChange} progress={progress} overlayTag={overlayTag} />;
+  return <PhonePicker active={active} onChange={onChange} progress={progress} overlayTag={overlayTag} />;
 }
 
+/* ── Pill-shaped swipe-response overlay ──────────────────────── */
+function PillOverlay({ label, color, borderRadius }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.94)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, { toValue: 1, duration: 140, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, stiffness: 240, damping: 22, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        StyleSheet.absoluteFillObject,
+        {
+          backgroundColor: color,
+          borderRadius,
+          alignItems: 'center',
+          justifyContent: 'center',
+          opacity,
+          transform: [{ scale }],
+          shadowColor: color,
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.35,
+          shadowRadius: 10,
+          elevation: 4,
+        },
+      ]}
+    >
+      <Text style={overlayStyles.label}>{label}</Text>
+    </Animated.View>
+  );
+}
+
+const overlayStyles = StyleSheet.create({
+  label: {
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    color: '#fff',
+    letterSpacing: 1.2,
+  },
+});
+
 /* ── Tablet: all categories visible as horizontal pills ──────── */
-function TabletPicker({ active, onChange, progress }) {
+function TabletPicker({ active, onChange, progress, overlayTag }) {
   return (
     <View style={tabletStyles.row}>
       {CATEGORIES.map((cat) => {
@@ -40,6 +87,14 @@ function TabletPicker({ active, onChange, progress }) {
               <Text style={[tabletStyles.count, isActive && tabletStyles.countActive]}>
                 {prog.done}/{prog.total}
               </Text>
+            )}
+            {isActive && overlayTag && (
+              <PillOverlay
+                key={overlayTag.id}
+                label={overlayTag.label}
+                color={overlayTag.color}
+                borderRadius={radii.full}
+              />
             )}
           </TouchableOpacity>
         );
@@ -85,7 +140,7 @@ const tabletStyles = StyleSheet.create({
 });
 
 /* ── Phone: styled carousel with progress + dots ─────────────── */
-function PhonePicker({ active, onChange, progress }) {
+function PhonePicker({ active, onChange, progress, overlayTag }) {
   const activeIdx = CATEGORIES.findIndex((c) => c.key === active);
   const cat = CATEGORIES[activeIdx] || CATEGORIES[0];
   const prog = progress[cat.key] || {};
@@ -118,6 +173,14 @@ function PhonePicker({ active, onChange, progress }) {
           </View>
           {prog.total > 0 && (
             <Text style={phoneStyles.count}>{prog.done}/{prog.total}</Text>
+          )}
+          {overlayTag && (
+            <PillOverlay
+              key={overlayTag.id}
+              label={overlayTag.label}
+              color={overlayTag.color}
+              borderRadius={radii.xl}
+            />
           )}
         </View>
 

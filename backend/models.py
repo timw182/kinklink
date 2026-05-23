@@ -8,6 +8,14 @@ VALID_MOODS = {
     "dreamy", "cheeky",
 }
 
+# Preset expressions a partner can send each other from the Mood tab.
+# Server-authoritative — clients can only send keys in this set, no free text.
+VALID_EXPRESSIONS = {
+    "thinking", "love", "kiss", "miss", "hug", "proud",
+    "good_morning", "goodnight", "on_my_way", "home_soon",
+    "coffee", "dinner",
+}
+
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -191,6 +199,17 @@ class CustomMessageRequest(BaseModel):
 class MoodOut(BaseModel):
     mine: Optional[str]
     partner: Optional[str]   # only set when both have active moods
+
+
+class ExpressionRequest(BaseModel):
+    key: str
+
+    @field_validator("key")
+    @classmethod
+    def key_valid(cls, v: str) -> str:
+        if v not in VALID_EXPRESSIONS:
+            raise ValueError(f"key must be one of: {', '.join(sorted(VALID_EXPRESSIONS))}")
+        return v
 
 
 # ── Profile ───────────────────────────────────────────────────────────────────

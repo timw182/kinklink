@@ -39,8 +39,9 @@ const TABS = [
   { name: SCREENS.SETTINGS, label: 'Settings',icon: 'sun'    },
 ];
 
-import { MOODS } from '../lib/constants';
+import { MOODS, EXPRESSIONS } from '../lib/constants';
 const MOOD_LABELS = Object.fromEntries(MOODS.map((m) => [m.key, m]));
+const EXPRESSION_LABELS = Object.fromEntries(EXPRESSIONS.map((e) => [e.key, e]));
 
 function MoodToast({ moodData, partnerName }) {
   const insets = useSafeAreaInsets();
@@ -71,6 +72,44 @@ function MoodToast({ moodData, partnerName }) {
   return (
     <Animated.View style={[styles.toast, { top: insets.top + 8, opacity, transform: [{ translateY }] }]}>
       <Text style={styles.toastText}>{text}</Text>
+    </Animated.View>
+  );
+}
+
+function ExpressionToast({ expression, partnerName }) {
+  const insets = useSafeAreaInsets();
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(-20)).current;
+
+  useEffect(() => {
+    if (!expression) return;
+    opacity.setValue(0);
+    translateY.setValue(-20);
+    Animated.parallel([
+      Animated.timing(opacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.spring(translateY, { toValue: 0, stiffness: 180, damping: 16, useNativeDriver: true }),
+    ]).start();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    const t = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+        Animated.timing(translateY, { toValue: -20, duration: 300, useNativeDriver: true }),
+      ]).start();
+    }, 4200);
+    return () => clearTimeout(t);
+  }, [expression?.ts]);
+
+  if (!expression) return null;
+  const e = EXPRESSION_LABELS[expression.key];
+  if (!e) return null;
+
+  return (
+    <Animated.View style={[styles.expressionToast, { top: insets.top + 8, opacity, transform: [{ translateY }] }]}>
+      <Text style={styles.expressionEmoji}>{e.emoji}</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.expressionFrom}>{partnerName}</Text>
+        <Text style={styles.expressionLabel}>{e.label}</Text>
+      </View>
     </Animated.View>
   );
 }
@@ -179,7 +218,7 @@ function SwipeAlertBanner() {
 }
 
 function MainTabs() {
-  const { newMatchCount, partnerMood } = useMatches();
+  const { newMatchCount, partnerMood, partnerExpression } = useMatches();
   const { user } = useAuth();
 
   return (
@@ -199,6 +238,9 @@ function MainTabs() {
       <ResetBanner />
       {partnerMood && (
         <MoodToast moodData={partnerMood} partnerName={user?.partnerName || 'Your partner'} />
+      )}
+      {partnerExpression && (
+        <ExpressionToast expression={partnerExpression} partnerName={user?.partnerName || 'Your partner'} />
       )}
     </View>
     </TabDirectionProvider>
@@ -332,6 +374,41 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansMedium,
     fontSize: 13,
     color: '#fff',
+  },
+  expressionToast: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: 'rgba(196, 84, 122, 0.35)',
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+    elevation: 8,
+  },
+  expressionEmoji: { fontSize: 32 },
+  expressionFrom: {
+    fontFamily: fonts.sansMedium,
+    fontSize: 11,
+    color: colors.textLight,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  expressionLabel: {
+    fontFamily: fonts.serifBold,
+    fontSize: 17,
+    color: colors.text,
+    letterSpacing: -0.2,
   },
   // Shared popup base
   popup: {

@@ -21,9 +21,11 @@ export default function BrowseScreen() {
   const [lastResponse, setLastResponse] = useState(null);
   const [loadError, setLoadError] = useState(false);
   const [stackHeight, setStackHeight] = useState(0);
+  const [swipeTag, setSwipeTag] = useState(null);
   const matchTimerRef = useRef(null);
   const matchDelayRef = useRef(null);
   const handledMatchRef = useRef(null);
+  const swipeTagTimerRef = useRef(null);
 
   const { latestNewMatch, dismissLatest, refetch, resetState } = useMatches();
 
@@ -111,6 +113,14 @@ export default function BrowseScreen() {
     const item = catalog.find((i) => i.id === itemId);
     if (item) setLastResponse({ item, response });
     setResponses((prev) => ({ ...prev, [String(itemId)]: response }));
+
+    // Surface the swipe response as an overlay on the category pill
+    const label = response === 'yes' ? '✓  Yes' : response === 'no' ? '✕  No' : '~  Maybe';
+    const color = response === 'yes' ? colors.yes : response === 'no' ? colors.no : colors.maybe;
+    clearTimeout(swipeTagTimerRef.current);
+    setSwipeTag({ id: itemId + ':' + response + ':' + Date.now(), label, color });
+    swipeTagTimerRef.current = setTimeout(() => setSwipeTag(null), 1200);
+
     client.post('/catalog/respond', { item_id: itemId, response })
       .then((data) => {
         if (response === 'yes') refetch();
@@ -144,7 +154,7 @@ export default function BrowseScreen() {
         <Text style={styles.headerTitle}>Explore</Text>
         <Text style={styles.headerSub}>200+ activities across 6 categories</Text>
       </View>
-      <CategoryPicker active={activeCategory} onChange={setActiveCategory} progress={progress} />
+      <CategoryPicker active={activeCategory} onChange={setActiveCategory} progress={progress} overlayTag={swipeTag} />
       <View style={styles.stackArea} onLayout={(e) => setStackHeight(e.nativeEvent.layout.height)}>
         {loadError && catalog.length === 0 ? (
           <View style={styles.errorBox}>

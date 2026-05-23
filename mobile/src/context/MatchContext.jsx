@@ -16,6 +16,7 @@ export function MatchProvider({ children }) {
   const [latestNewMatch, setLatestNewMatch] = useState(null);
   const [resetState, setResetState]     = useState("none");
   const [partnerMood, setPartnerMood]   = useState(null);
+  const [partnerExpression, setPartnerExpression] = useState(null);
   const [swipeAlert, setSwipeAlert]     = useState(null);
   const timerRef   = useRef(null);
   const wsRef      = useRef(null);
@@ -124,7 +125,7 @@ export function MatchProvider({ children }) {
     };
 
     const KNOWN_WS_TYPES = new Set([
-      'match', 'mood_update', 'mood_cleared', 'swipe_pattern_alert',
+      'match', 'mood_update', 'mood_cleared', 'expression', 'swipe_pattern_alert',
       'reset_requested', 'reset_cancelled', 'reset_declined', 'reset_done',
       'partner_deleted',
     ]);
@@ -144,6 +145,17 @@ export function MatchProvider({ children }) {
         } else if (msg.type === "mood_update" || msg.type === "mood_cleared") {
           const isSelf = msg.from_user_id === userRef.current?.id;
           setPartnerMood({ mood: msg.mood || null, isSelf });
+        } else if (msg.type === "expression") {
+          // Skip echoes of our own sends; sender already got immediate UI feedback
+          if (msg.from_user_id !== userRef.current?.id) {
+            setPartnerExpression({
+              id: msg.id,
+              key: msg.key,
+              sender_id: msg.from_user_id,
+              sent_at: msg.sent_at,
+              ts: Date.now(),  // nonce so toast/chat re-fire on repeat sends
+            });
+          }
         } else if (msg.type === "swipe_pattern_alert") {
           if (msg.about_user_id !== userRef.current?.id) {
             setSwipeAlert(msg);
@@ -163,6 +175,7 @@ export function MatchProvider({ children }) {
           setMatches([]);
           setLatestNewMatch(null);
           setPartnerMood(null);
+          setPartnerExpression(null);
           setSwipeAlert(null);
           setResetState("none");
           knownIds.current.clear();
@@ -209,7 +222,7 @@ export function MatchProvider({ children }) {
   const newMatchCount = matches.filter((m) => !m.seen).length;
 
   return (
-    <MatchContext.Provider value={{ matches, setMatches, latestNewMatch, newMatchCount, dismissLatest, refetch, resetState, setResetState, partnerMood, setPartnerMood, swipeAlert, setSwipeAlert }}>
+    <MatchContext.Provider value={{ matches, setMatches, latestNewMatch, newMatchCount, dismissLatest, refetch, resetState, setResetState, partnerMood, setPartnerMood, partnerExpression, setPartnerExpression, swipeAlert, setSwipeAlert }}>
       {children}
     </MatchContext.Provider>
   );

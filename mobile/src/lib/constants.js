@@ -22,6 +22,26 @@ export const MOODS = [
   { key: 'cheeky', label: 'Cheeky', emoji: '🙃' },
 ];
 
+// Preset expressions partners can send from the Mood tab. Keys must match
+// VALID_EXPRESSIONS in backend/models.py — server rejects anything else.
+export const EXPRESSIONS = [
+  // Affection
+  { key: 'thinking',     label: 'thinking of you', emoji: '💗' },
+  { key: 'love',         label: 'love you',        emoji: '🫶' },
+  { key: 'kiss',         label: 'kiss',            emoji: '😘' },
+  { key: 'miss',         label: 'miss you',        emoji: '🤗' },
+  { key: 'hug',          label: 'hug',             emoji: '🫂' },
+  { key: 'proud',        label: 'proud of you',    emoji: '🥰' },
+  // Daily rhythm
+  { key: 'good_morning', label: 'good morning',    emoji: '🌅' },
+  { key: 'goodnight',    label: 'goodnight',       emoji: '🌙' },
+  { key: 'on_my_way',    label: 'on my way',       emoji: '🚗' },
+  { key: 'home_soon',    label: 'home soon',       emoji: '🏠' },
+  // Invitations
+  { key: 'coffee',       label: 'coffee?',         emoji: '☕' },
+  { key: 'dinner',       label: 'dinner?',         emoji: '🍷' },
+];
+
 export const SCREENS = {
   LANDING: 'Landing',
   PAIRING: 'Pairing',

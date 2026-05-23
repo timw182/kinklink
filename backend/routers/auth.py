@@ -232,6 +232,7 @@ async def disconnect_partner(request: Request, db: Connection = Depends(get_db))
     await db.execute("DELETE FROM reset_requests WHERE couple_id = ?", (couple_id,))
     await db.execute("DELETE FROM swipe_pattern_alerts WHERE couple_id = ?", (couple_id,))
     await db.execute("DELETE FROM custom_catalog_items WHERE couple_id = ?", (couple_id,))
+    await db.execute("DELETE FROM expressions WHERE couple_id = ?", (couple_id,))
 
     # Unpair both users
     await db.execute(
@@ -263,6 +264,7 @@ async def delete_account(request: Request, db: Connection = Depends(get_db)):
         await db.execute("DELETE FROM reset_requests WHERE couple_id = ?", (couple_id,))
         await db.execute("DELETE FROM swipe_pattern_alerts WHERE couple_id = ?", (couple_id,))
         await db.execute("DELETE FROM custom_catalog_items WHERE couple_id = ?", (couple_id,))
+        await db.execute("DELETE FROM expressions WHERE couple_id = ?", (couple_id,))
         for pid in [uid, partner_id]:
             await db.execute("DELETE FROM user_responses WHERE user_id = ?", (pid,))
             await db.execute("DELETE FROM match_seen WHERE user_id = ?", (pid,))
