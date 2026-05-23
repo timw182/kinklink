@@ -6,3 +6,4 @@ itsdangerous==2.2.0
 python-multipart==0.0.20
 slowapi==0.1.9
 resend==2.10.0
+app-store-server-library==3.0.0

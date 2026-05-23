@@ -23,12 +23,11 @@ export default function PairingScreen({ navigation, route }) {
   const [joinCode, setJoinCode] = useState('');
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
-  const [restoring, setRestoring] = useState(false);
   const [onboardingVisible, setOnboardingVisible] = useState(false);
   const [onboardingSlide, setOnboardingSlide] = useState(0);
   const slideAnim = useRef(new Animated.Value(0)).current;
   const { pair, createPairingCode, enterSolo, logout, loading } = useAuth();
-  const { credits, purchasePairingCode, restorePurchases, refreshCredits } = usePurchase();
+  const { credits, purchasePairingCode, refreshCredits } = usePurchase();
 
   useEffect(() => {
     refreshCredits();
@@ -74,23 +73,6 @@ export default function PairingScreen({ navigation, route }) {
       setError(err.message || 'Could not create invite');
     } finally {
       setCreating(false);
-    }
-  }
-
-  async function handleRestore() {
-    setError('');
-    setRestoring(true);
-    try {
-      const restored = await restorePurchases();
-      if (restored) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      } else {
-        setError('No previous purchase found');
-      }
-    } catch (err) {
-      setError(err.message || 'Could not restore purchase');
-    } finally {
-      setRestoring(false);
     }
   }
 
@@ -217,7 +199,7 @@ export default function PairingScreen({ navigation, route }) {
 
         <View style={styles.hero}>
           <Text style={styles.title}>Connect with{'\n'}your person.</Text>
-          <Text style={styles.subtitle}>Discover what you both want — together.</Text>
+          <Text style={styles.subtitle}>Find what you have in common.</Text>
         </View>
 
         <View style={styles.howItWorks}>
@@ -294,14 +276,6 @@ export default function PairingScreen({ navigation, route }) {
         <TouchableOpacity onPress={handleSolo} style={styles.soloBtn}>
           <Text style={styles.soloText}>Explore solo for now →</Text>
         </TouchableOpacity>
-
-        {credits <= 0 && (
-          <TouchableOpacity onPress={handleRestore} style={styles.restoreBtn} disabled={restoring}>
-            <Text style={styles.restoreText}>
-              {restoring ? 'Restoring…' : 'Restore purchase'}
-            </Text>
-          </TouchableOpacity>
-        )}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -456,10 +430,6 @@ const styles = StyleSheet.create({
   // Solo
   soloBtn: { alignSelf: 'center', paddingVertical: space[3] },
   soloText: { fontFamily: fonts.sansLight, fontSize: 13, color: colors.textLight },
-
-  // Restore
-  restoreBtn: { alignSelf: 'center', paddingVertical: space[2] },
-  restoreText: { fontFamily: fonts.sansLight, fontSize: 12, color: colors.textLight, textDecorationLine: 'underline' },
 
   // Skip in join mode
   skipBtn: { alignSelf: 'center', paddingVertical: space[3], marginTop: space[2] },

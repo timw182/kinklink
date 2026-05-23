@@ -76,22 +76,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import Constants from 'expo-constants';
 
-import { TurboModuleRegistry, NativeModules } from 'react-native';
+import { TurboModuleRegistry } from 'react-native';
 
 // Guard: only require if native module is actually linked in this build.
 // Google Sign-In is a TurboModule (RNGoogleSignin).
-// react-native-fbsdk-next is still a legacy bridge module — access via NativeModules.FBLoginManager.
 const _hasGoogle = (() => { try { return !!TurboModuleRegistry.get('RNGoogleSignin'); } catch { return false; } })();
-const _hasFb = (() => { try { return !!NativeModules.FBLoginManager; } catch { return false; } })();
 
 function getGoogleSignin() {
   if (!_hasGoogle) return null;
   return require('@react-native-google-signin/google-signin').GoogleSignin;
-}
-function getFbSdk() {
-  if (!_hasFb) return null;
-  const mod = require('react-native-fbsdk-next');
-  return { LoginManager: mod.LoginManager, AccessToken: mod.AccessToken };
 }
 import { useAuth } from '../context/useAuth';
 import client from '../api/client';
@@ -309,20 +302,6 @@ export default function LandingScreen({ navigation }) {
       if (e.code !== 'SIGN_IN_CANCELLED') {
         setError(e.message || 'Google sign-in failed');
       }
-    }
-  }
-
-  async function handleFacebookSignIn() {
-    const fb = getFbSdk();
-    if (!fb) { setError('Facebook sign-in requires a new app build'); return; }
-    try {
-      const result = await fb.LoginManager.logInWithPermissions(['public_profile', 'email']);
-      if (result.isCancelled) return;
-      const tokenData = await fb.AccessToken.getCurrentAccessToken();
-      if (!tokenData) throw new Error('No access token from Facebook');
-      await socialLogin('facebook', tokenData.accessToken, '');
-    } catch (e) {
-      setError(e.message || 'Facebook sign-in failed');
     }
   }
 
@@ -676,15 +655,6 @@ export default function LandingScreen({ navigation }) {
                   <Path d="M12 4.75c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 1.09 14.97 0 12 0 7.7 0 3.99 2.47 2.18 6.08l3.66 2.84c.87-2.6 3.3-4.17 6.16-4.17z" fill="#EA4335" />
                 </Svg>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.socialBtn, styles.socialBtnDisabled]}
-                disabled
-                activeOpacity={1}
-              >
-                <Svg width={20} height={20} viewBox="0 0 24 24" fill="#B8B0C4">
-                  <Path d="M24 12c0-6.627-5.373-12-12-12S0 5.373 0 12c0 5.99 4.388 10.954 10.125 11.854V15.47H7.078V12h3.047V9.356c0-3.007 1.792-4.668 4.533-4.668 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874V12h3.328l-.532 3.469h-2.796v8.385C19.612 22.954 24 17.99 24 12z" />
-                </Svg>
-              </TouchableOpacity>
             </View>
           </View>
 
@@ -786,11 +756,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  socialBtnDisabled: {
-    opacity: 0.4,
-    backgroundColor: colors.bg,
-  },
-
   cta: { gap: space[4], alignItems: 'center' },
   toggleBtn: { paddingHorizontal: space[2], paddingVertical: space[4] },
   toggleText: { fontFamily: fonts.sans, fontSize: 14, color: colors.textMuted, letterSpacing: 0.2, textAlign: 'center' },

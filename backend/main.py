@@ -167,13 +167,30 @@ async def ws_ticket(request: Request):
     from routers.deps import resolve_user_id
     async with get_db_ctx() as db:
         uid = await resolve_user_id(request, db)
-    if not uid:
-        raise HTTPException(401, "Not authenticated")
+        if not uid:
+            raise HTTPException(401, "Not authenticated")
+        # Cookie sessions: reject if session_token has been rotated (logout / new
+        # login on another device). Without this, a stale cookie can still mint
+        # WS tickets and listen to its old couple's match/mood broadcasts.
+        if request.session.get("user_id") == uid:
+            stored = request.session.get("session_token")
+            if stored:
+                cur = await db.execute("SELECT session_token FROM users WHERE id = ?", (uid,))
+                row = await cur.fetchone()
+                if not row or row["session_token"] != stored:
+                    request.session.clear()
+                    raise HTTPException(401, "Session expired")
     now = time.time()
-    # Prune expired tickets
+    # Prune expired tickets (also bound the dict size as a defensive cap)
     expired = [k for k, (_, exp) in list(_ws_tickets.items()) if exp < now]
     for k in expired:
         del _ws_tickets[k]
+    if len(_ws_tickets) > 10000:
+        # Drop the oldest 10% if the dict ever blows up — TTL alone can't bound
+        # this if a single client floods us before the next prune cycle runs.
+        oldest = sorted(_ws_tickets.items(), key=lambda kv: kv[1][1])[: len(_ws_tickets) // 10]
+        for k, _ in oldest:
+            _ws_tickets.pop(k, None)
     ticket = secrets.token_hex(16)
     _ws_tickets[ticket] = (uid, now + 60)
     return {"ticket": ticket}

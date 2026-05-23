@@ -803,7 +803,7 @@ export default function SettingsScreen({ navigation }) {
         <Sheet open={activeSheet === "about"} onClose={closeSheet} title="About Venn">
           <View style={[styles.field, { alignItems: "center" }]}>
             <Text style={[styles.muted, { textAlign: "center" }]}>
-              Discover what you both want — without the awkwardness. Your responses are never shared unless you both say
+              A private space to find shared interests with your partner. Your responses are never shared unless you both say
               yes.
             </Text>
             <View style={styles.aboutLinks}>

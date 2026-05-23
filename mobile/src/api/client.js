@@ -10,13 +10,23 @@ const REFRESH_KEY = 'vn_refresh_token';
 const LEGACY_TOKEN_KEY = 'vn_session_token';
 const REQUEST_TIMEOUT = 15000;
 
+// Paths that must NOT trigger a refresh on 401. Everything else (including
+// /auth/me, /auth/profile, etc.) is refreshable.
+const NO_REFRESH_PATHS = new Set([
+  '/auth/register',
+  '/auth/login',
+  '/auth/token',
+  '/auth/token/refresh',
+  '/auth/social',
+  '/auth/social-web',
+  '/auth/logout',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+]);
+
 // Global 401 listener — AuthContext hooks into this to force logout
 let _onUnauthorized = null;
 export function setOnUnauthorized(fn) { _onUnauthorized = fn; }
-
-// Global error listener — ErrorContext hooks into this to show toast
-let _onError = null;
-export function setOnError(fn) { _onError = fn; }
 
 async function getAccessToken() {
   return SecureStore.getItemAsync(ACCESS_KEY).catch(() => null);
@@ -104,19 +114,20 @@ async function request(path, options = {}) {
     });
   } catch (err) {
     if (err.name === 'AbortError') {
-      _onError?.('Request timed out', { endpoint: path });
       throw new Error('Request timed out');
     }
-    _onError?.(err.message || 'Network error', { endpoint: path });
     throw err;
   } finally {
     clearTimeout(timeout);
   }
 
-  // On 401, try refresh once (except for auth endpoints)
+  // On 401, try refresh once. Skip refresh only for endpoints that issue or
+  // revoke tokens themselves — refreshing those would either loop or be
+  // meaningless. All other /auth/* paths (e.g. /auth/me, /auth/profile) MUST
+  // be refreshable, otherwise the user gets silently logged out every 15min.
   if (res.status === 401) {
-    const isAuthPath = path.startsWith('/auth/');
-    if (!isAuthPath && token) {
+    const skipRefresh = NO_REFRESH_PATHS.has(path);
+    if (!skipRefresh && token) {
       const refreshed = await refreshTokens();
       if (refreshed) {
         // Retry with new token
@@ -144,7 +155,7 @@ async function request(path, options = {}) {
     if (res.status === 401) {
       const body = await res.json().catch(() => ({}));
       const detail = typeof body.detail === 'string' ? body.detail : 'Unauthorized';
-      if (!isAuthPath) {
+      if (!skipRefresh) {
         await clearSession();
         const reason = detail === 'Logged in on another device' ? 'another_device' : 'session_expired';
         _onUnauthorized?.(reason);
@@ -166,7 +177,6 @@ async function request(path, options = {}) {
       : typeof detail === 'string'
       ? detail
       : `Request failed: ${res.status}`;
-    _onError?.(message, { endpoint: path, status: res.status });
     throw new Error(message);
   }
 

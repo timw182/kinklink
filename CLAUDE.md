@@ -19,7 +19,7 @@ cd backend
 source ../.venv/bin/activate
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
-Production: `pm2 restart venn-api`
+Production: `pm2 restart venn-api`. The pm2 process runs the venv python (`/root/venn/.venv/bin/python`) — never the system `python3`, which is missing some deps (e.g. `app-store-server-library`). New backend deps must be installed with `/root/venn/.venv/bin/python -m pip install ...`.
 
 **When adding new vars to `backend/.env`**: a plain `pm2 restart` does NOT re-read `ecosystem.config.js`, so new keys stay missing in the running process. Use:
 ```bash
@@ -85,6 +85,15 @@ Frontend: `https://venn.lu` — API: `https://api.venn.lu`
 - `DEBUG` — enables `/api/docs` and `/api/redoc`
 - `DB_PATH` — SQLite path (default `venn.db`)
 - `COOKIE_DOMAIN` — session cookie domain
+- `APPLE_APP_ID` — numeric App Store Connect ID (only required once shipping to the production App Store; sandbox/TestFlight works without it)
+
+### In-App Purchase
+- iOS uses **expo-iap** with StoreKit 2 (no RevenueCat). Pairing code is a consumable: `lu.venn.pairingcode_v2`.
+- Mobile sets `appAccountToken` on `requestPurchase` to the per-user UUID returned by `GET /pairing/status` (`iap_account_token`). The backend computes the same UUID via `uuid5(_IAP_TOKEN_NAMESPACE, str(uid))` and rejects any JWS whose `appAccountToken` doesn't match the requesting session — this prevents JWS replay across users.
+- Mobile sends the JWS-signed transaction (`purchase.purchaseToken`) to `POST /pairing/verify-purchase`.
+- Backend verifies the JWS signature locally via `app-store-server-library` against `apple_certs/AppleRootCA-G3.cer`, then idempotently records the transaction in `pairing_purchases` and increments `users.pairing_credits`.
+- When `PAYMENT_REQUIRED=true` and a production verifier is loaded (`APPLE_APP_ID` set), sandbox JWS payloads are rejected so a TestFlight tester can't credit the production account.
+- No "Restore" UI: credits are account-bound on the backend, so signing back in already restores them — and Apple's `restorePurchases` does not work for consumables.
 
 ## Design System
 

@@ -31,7 +31,7 @@ export default function CodeRevealScreen({ navigation, route }) {
       }
       try {
         const raw = await client.get('/auth/me');
-        if (raw.couple_id) {
+        if (raw?.couple_id) {
           clearInterval(poll);
           setUser({
             id: raw.id,

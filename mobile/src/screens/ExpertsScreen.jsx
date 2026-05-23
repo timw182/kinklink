@@ -43,7 +43,8 @@ export default function ExpertsScreen({ navigation }) {
 
         <View style={s.whyCard}>
           <Text style={s.whyTitle}>Why we built Venn</Text>
-          <Text style={s.whyBody}>Most couples have things they'd love to try but never bring up — not because they don't trust each other, but because the conversation itself feels risky. What if they say no? What if it gets weird?</Text>
+          <Text style={s.whyBody}>Most couples have shared interests they never quite get around to talking about — not because they don't trust each other, but because the conversation itself feels awkward. What if they say no? What if it gets weird?</Text>
+
           <Text style={s.whyBody}>We built Venn to take that pressure away. Both of you swipe independently, and only the things you both said yes to ever surface. No one sees a rejection. No one feels judged.</Text>
           <Text style={s.whyBody}>It's not about fixing something that's broken. It's about giving couples a low-stakes way to discover what they already have in common — and maybe be surprised by it.</Text>
           <Text style={s.whyBody}>No algorithms trying to keep you scrolling. No ads. No data sold. Just you two, finding your overlap.</Text>

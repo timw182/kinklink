@@ -146,6 +146,17 @@ async def me(request: Request, db: Connection = Depends(get_db)):
     uid = await resolve_user_id(request, db)
     if not uid:
         return None  # 200 with null body — avoids noisy 401 in browser console
+    # When auth came from the cookie session, confirm it hasn't been revoked
+    # (e.g., a fresh login on another device cleared the user's session_token).
+    # Without this, a kicked-out web client briefly renders the authed UI.
+    if request.session.get("user_id") == uid:
+        token = request.session.get("session_token")
+        if token:
+            cur = await db.execute("SELECT session_token FROM users WHERE id = ?", (uid,))
+            row = await cur.fetchone()
+            if not row or row["session_token"] != token:
+                request.session.clear()
+                return None
     return await _get_user_out(db, uid)
 
 
@@ -562,7 +573,12 @@ async def _verify_facebook_token(access_token: str) -> dict:
 
 
 async def _find_or_create_social_user(
-    db: Connection, provider: str, provider_id: str, email: str, display_name: str
+    db: Connection,
+    provider: str,
+    provider_id: str,
+    email: str,
+    display_name: str,
+    email_verified: bool,
 ) -> int:
     """Look up or create a user for the given social provider. Returns user_id."""
     cur = await db.execute(
@@ -573,21 +589,22 @@ async def _find_or_create_social_user(
     if row:
         return row["id"]
 
-    # Check if email matches an existing account
+    # Cross-provider auto-linking is gated: we only trust the email as proof of
+    # ownership when the IdP has verified it. Facebook is excluded entirely
+    # because the /me email is not reliably verified.
+    can_link_by_email = bool(email and email_verified and provider != "facebook")
+
     if email:
         cur = await db.execute(
-            "SELECT id, password_hash, auth_provider FROM users WHERE username = ?", (email,)
+            "SELECT id, password_hash FROM users WHERE username = ?", (email,)
         )
         existing = await cur.fetchone()
         if existing:
-            # Only auto-link if the account has no password (was created via social or is empty).
-            # Accounts with a password set must be explicitly logged in before linking a social
-            # provider, to prevent a third-party social takeover via matching email.
-            if existing["password_hash"]:
+            if not can_link_by_email or existing["password_hash"]:
                 raise HTTPException(
                     409,
-                    "An account with this email already exists. Sign in with your password, "
-                    "then link your social account from Settings.",
+                    "An account with this email already exists. "
+                    "Sign in with your original method, then link this provider from Settings.",
                 )
             await db.execute(
                 "UPDATE users SET auth_provider = ?, auth_provider_id = ? WHERE id = ?",
@@ -596,16 +613,30 @@ async def _find_or_create_social_user(
             await db.commit()
             return existing["id"]
 
-    # New user
-    username = email or f"{provider}_{provider_id[:12]}@noreply.venn.lu"
+    # New user. Use the email as username only if the IdP verified it; otherwise
+    # mint a placeholder so an unverified email never becomes the canonical
+    # account identifier.
+    if email and email_verified:
+        username = email
+    else:
+        username = f"{provider}_{provider_id[:12]}@noreply.venn.lu"
     color = AVATAR_COLORS[hash(username) % len(AVATAR_COLORS)]
-    name = display_name or (email.split("@")[0] if email else "Venn User")
+    name = display_name or (email.split("@")[0] if (email and email_verified) else "Venn User")
     cursor = await db.execute(
         "INSERT INTO users (username, password_hash, display_name, avatar_color, auth_provider, auth_provider_id) VALUES (?,?,?,?,?,?)",
         (username, "", name, color, provider, provider_id),
     )
     await db.commit()
     return cursor.lastrowid
+
+
+def _coerce_email_verified(value) -> bool:
+    """IdPs return email_verified as bool, 'true'/'false' string, or missing."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return False
 
 
 @router.post("/social", response_model=TokenResponse)
@@ -622,39 +653,16 @@ async def social_login(request: Request, db: Connection = Depends(get_db)):
     if not id_token:
         raise HTTPException(400, "id_token is required")
 
-    if provider == "apple":
-        try:
-            claims = await _verify_apple_token(id_token)
-        except Exception as e:
-            log.warning("Apple token verification failed: %s", e)
-            raise HTTPException(401, "Invalid Apple identity token")
-        provider_id = claims.get("sub", "")
-        email = claims.get("email", "")
-
-    elif provider == "google":
-        try:
-            claims = await _verify_google_token(id_token)
-        except Exception as e:
-            log.warning("Google token verification failed: %s", e)
-            raise HTTPException(401, "Invalid Google identity token")
-        provider_id = claims.get("sub", "")
-        email = claims.get("email", "")
-        given_name = given_name or claims.get("name", "")
-
-    elif provider == "facebook":
-        try:
-            profile = await _verify_facebook_token(id_token)
-        except Exception as e:
-            log.warning("Facebook token verification failed: %s", e)
-            raise HTTPException(401, "Invalid Facebook access token")
-        provider_id = profile.get("id", "")
-        email = profile.get("email", "")
-        given_name = given_name or profile.get("name", "")
+    provider_id, email, email_verified, given_name = await _resolve_social_identity(
+        provider, id_token, given_name
+    )
 
     if not provider_id:
         raise HTTPException(401, "Invalid token: missing subject")
 
-    user_id = await _find_or_create_social_user(db, provider, provider_id, email, given_name)
+    user_id = await _find_or_create_social_user(
+        db, provider, provider_id, email, given_name, email_verified
+    )
 
     # Invalidate all other sessions (web cookie + existing refresh tokens)
     await db.execute("UPDATE users SET session_token = NULL WHERE id = ?", (user_id,))
@@ -667,6 +675,52 @@ async def social_login(request: Request, db: Connection = Depends(get_db)):
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         user=user,
     )
+
+
+async def _resolve_social_identity(provider: str, id_token: str, given_name: str):
+    """Verify an IdP token and return (provider_id, email, email_verified, display_name)."""
+    if provider == "apple":
+        try:
+            claims = await _verify_apple_token(id_token)
+        except Exception as e:
+            log.warning("Apple token verification failed: %s", e)
+            raise HTTPException(401, "Invalid Apple identity token")
+        return (
+            claims.get("sub", ""),
+            claims.get("email", ""),
+            _coerce_email_verified(claims.get("email_verified")),
+            given_name,
+        )
+
+    if provider == "google":
+        try:
+            claims = await _verify_google_token(id_token)
+        except Exception as e:
+            log.warning("Google token verification failed: %s", e)
+            raise HTTPException(401, "Invalid Google identity token")
+        return (
+            claims.get("sub", ""),
+            claims.get("email", ""),
+            _coerce_email_verified(claims.get("email_verified")),
+            given_name or claims.get("name", ""),
+        )
+
+    if provider == "facebook":
+        try:
+            profile = await _verify_facebook_token(id_token)
+        except Exception as e:
+            log.warning("Facebook token verification failed: %s", e)
+            raise HTTPException(401, "Invalid Facebook access token")
+        # Facebook does NOT verify email ownership reliably for OAuth — never
+        # trust it for cross-provider linking.
+        return (
+            profile.get("id", ""),
+            profile.get("email", ""),
+            False,
+            given_name or profile.get("name", ""),
+        )
+
+    raise HTTPException(400, "Unsupported provider")
 
 
 @router.post("/social-web", response_model=UserOutWithToken)
@@ -683,39 +737,16 @@ async def social_login_web(request: Request, db: Connection = Depends(get_db)):
     if not id_token:
         raise HTTPException(400, "id_token is required")
 
-    if provider == "apple":
-        try:
-            claims = await _verify_apple_token(id_token)
-        except Exception as e:
-            log.warning("Apple token verification failed: %s", e)
-            raise HTTPException(401, "Invalid Apple identity token")
-        provider_id = claims.get("sub", "")
-        email = claims.get("email", "")
-
-    elif provider == "google":
-        try:
-            claims = await _verify_google_token(id_token)
-        except Exception as e:
-            log.warning("Google token verification failed: %s", e)
-            raise HTTPException(401, "Invalid Google identity token")
-        provider_id = claims.get("sub", "")
-        email = claims.get("email", "")
-        given_name = given_name or claims.get("name", "")
-
-    elif provider == "facebook":
-        try:
-            profile = await _verify_facebook_token(id_token)
-        except Exception as e:
-            log.warning("Facebook token verification failed: %s", e)
-            raise HTTPException(401, "Invalid Facebook access token")
-        provider_id = profile.get("id", "")
-        email = profile.get("email", "")
-        given_name = given_name or profile.get("name", "")
+    provider_id, email, email_verified, given_name = await _resolve_social_identity(
+        provider, id_token, given_name
+    )
 
     if not provider_id:
         raise HTTPException(401, "Invalid token: missing subject")
 
-    user_id = await _find_or_create_social_user(db, provider, provider_id, email, given_name)
+    user_id = await _find_or_create_social_user(
+        db, provider, provider_id, email, given_name, email_verified
+    )
 
     token = secrets.token_hex(32)
     await db.execute("UPDATE users SET session_token = ? WHERE id = ?", (token, user_id))

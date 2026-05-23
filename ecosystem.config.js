@@ -28,8 +28,8 @@ module.exports = {
   apps: [
     {
       name: 'venn-api',
-      script: 'python3',
-      args: '-m uvicorn main:app --host 127.0.0.1 --port 7713',
+      script: '/root/venn/.venv/bin/python',
+      args: '-m uvicorn main:app --host 127.0.0.1 --port 7713 --proxy-headers --forwarded-allow-ips=127.0.0.1',
       cwd: '/root/venn/backend',
       env: loadEnv('/root/venn/backend/.env'),
     },

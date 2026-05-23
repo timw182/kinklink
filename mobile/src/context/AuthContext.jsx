@@ -1,7 +1,6 @@
 import { createContext, useState, useCallback, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Purchases from 'react-native-purchases';
 import client, { clearSession, storeTokens, setOnUnauthorized } from '../api/client';
 
 const SOLO_KEY = 'vn_solo';
@@ -9,6 +8,7 @@ const SOLO_KEY = 'vn_solo';
 export const AuthContext = createContext(null);
 
 function toUser(raw) {
+  if (!raw) return null;
   return {
     id: raw.id,
     username: raw.username,
@@ -30,8 +30,7 @@ export function AuthProvider({ children }) {
     Promise.all([
       client.get('/auth/me').then((raw) => {
         const u = toUser(raw);
-        setUser(u);
-        Purchases.logIn(String(u.id)).catch(() => {});
+        if (u) setUser(u);
       }).catch(() => {}),
       AsyncStorage.getItem(SOLO_KEY).then((v) => { if (v) setIsSolo(true); }).catch(() => {}),
     ]).finally(() => setLoading(false));
@@ -44,14 +43,21 @@ export function AuthProvider({ children }) {
     });
   }, []);
 
-  // Revalidate session when app comes to foreground
+  // Revalidate session when app comes to foreground. Only update on a
+  // successful response — failures (network, 401, etc.) are handled centrally
+  // by the _onUnauthorized callback registered above. Clearing the user here
+  // would kick people out for transient network blips or expired access tokens
+  // that the client will silently refresh on the next real request.
   const appState = useRef(AppState.currentState);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
       if (appState.current.match(/inactive|background/) && next === 'active') {
         client.get('/auth/me')
-          .then((raw) => setUser(toUser(raw)))
-          .catch(() => { setUser(null); });
+          .then((raw) => {
+            const u = toUser(raw);
+            if (u) setUser(u);
+          })
+          .catch(() => {});
       }
       appState.current = next;
     });
@@ -71,7 +77,6 @@ export function AuthProvider({ children }) {
     await resetLocalFlags();
     const u = toUser(raw.user);
     setUser(u);
-    Purchases.logIn(String(u.id)).catch(() => {});
     return u;
   }, [resetLocalFlags]);
 
@@ -86,7 +91,6 @@ export function AuthProvider({ children }) {
     await resetLocalFlags();
     const u = toUser(raw.user);
     setUser(u);
-    Purchases.logIn(String(u.id)).catch(() => {});
     return u;
   }, [resetLocalFlags]);
 
@@ -98,7 +102,6 @@ export function AuthProvider({ children }) {
     await resetLocalFlags();
     const u = toUser(raw.user);
     setUser(u);
-    Purchases.logIn(String(u.id)).catch(() => {});
     await AsyncStorage.setItem('vn_show_onboarding', '1').catch(() => {});
     return u;
   }, [resetLocalFlags]);
@@ -110,7 +113,6 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(async () => {
     await client.post('/auth/logout').catch(() => {});
-    await Purchases.logOut().catch(() => {});
     await clearSession();
     await AsyncStorage.removeItem(SOLO_KEY).catch(() => {});
     setUser(null);

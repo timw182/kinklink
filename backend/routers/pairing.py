@@ -2,12 +2,21 @@ import os
 import secrets
 import string
 import logging
+import uuid
 import resend
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from aiosqlite import Connection
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+
+from appstoreserverlibrary.signed_data_verifier import (
+    SignedDataVerifier,
+    VerificationException,
+    VerificationStatus,
+)
+from appstoreserverlibrary.models.Environment import Environment
 
 from database import get_db
 from models import PairingCodeOut, JoinRequest, UserOut
@@ -21,6 +30,100 @@ CODE_TTL_HOURS = 48
 
 # Beta flag — set PAYMENT_REQUIRED=true in prod once IAP is wired
 PAYMENT_REQUIRED = os.environ.get("PAYMENT_REQUIRED", "false").lower() == "true"
+
+# Apple StoreKit 2 receipt verification
+IAP_BUNDLE_ID = "net.amoreapp.venn"
+IAP_PRODUCT_ID = "lu.venn.pairingcode_v2"
+APPLE_ROOT_CA_PATH = Path(__file__).resolve().parent.parent / "apple_certs" / "AppleRootCA-G3.cer"
+
+# Stable namespace for per-user IAP appAccountToken UUIDs. Must remain constant
+# across deploys — rotating it would invalidate any in-flight purchase.
+_IAP_TOKEN_NAMESPACE = uuid.UUID("d9e7f4a1-2b3c-4d5e-9f6a-7b8c1d2e3f40")
+
+
+def iap_account_token_for(user_id: int) -> str:
+    """Deterministic per-user UUID passed as StoreKit appAccountToken."""
+    return str(uuid.uuid5(_IAP_TOKEN_NAMESPACE, str(user_id)))
+
+
+async def _find_user_id_by_iap_token(db: Connection, token: str) -> int | None:
+    """Reverse-lookup: which user_id's iap_account_token equals this UUID?
+
+    Used to recover from cross-account purchase replay. Iterates all users —
+    fine at beta scale; revisit if user count grows. Caching is left out
+    deliberately because user_id space is small and sparse.
+    """
+    if not token:
+        return None
+    target = token.lower()
+    cur = await db.execute("SELECT id FROM users")
+    rows = await cur.fetchall()
+    for row in rows:
+        if iap_account_token_for(row["id"]).lower() == target:
+            return row["id"]
+    return None
+
+_apple_verifiers: list[SignedDataVerifier] | None = None
+
+
+def _get_apple_verifiers() -> list[SignedDataVerifier]:
+    """Lazy-init verifiers for both sandbox and (optionally) production.
+
+    Sandbox is always created (TestFlight transactions). Production is only
+    created if APP_APPLE_ID env var is set — Apple's library requires the
+    numeric App Store ID for prod verification.
+    """
+    global _apple_verifiers
+    if _apple_verifiers is not None:
+        return _apple_verifiers
+
+    with APPLE_ROOT_CA_PATH.open("rb") as f:
+        root_certs = [f.read()]
+
+    verifiers = [
+        SignedDataVerifier(root_certs, False, Environment.SANDBOX, IAP_BUNDLE_ID, None)
+    ]
+    app_apple_id = os.environ.get("APPLE_APP_ID")
+    if app_apple_id:
+        try:
+            verifiers.insert(
+                0,
+                SignedDataVerifier(
+                    root_certs, False, Environment.PRODUCTION, IAP_BUNDLE_ID, int(app_apple_id)
+                ),
+            )
+        except ValueError:
+            log.warning("APP_APPLE_ID is not a valid integer: %r", app_apple_id)
+
+    _apple_verifiers = verifiers
+    return verifiers
+
+
+def _verify_apple_jws(jws: str):
+    """Verify a StoreKit 2 signed transaction. Tries production first, then sandbox.
+
+    Returns the decoded payload on success. Raises HTTPException on failure.
+    """
+    last_exc: VerificationException | None = None
+    for v in _get_apple_verifiers():
+        try:
+            return v.verify_and_decode_signed_transaction(jws)
+        except VerificationException as e:
+            # Wrong environment — try the next verifier. Anything else is a hard fail.
+            if e.status == VerificationStatus.INVALID_ENVIRONMENT:
+                last_exc = e
+                continue
+            log.warning("Apple JWS verification failed: %s", e.status.name)
+            raise HTTPException(400, "Invalid purchase receipt")
+        except Exception as e:
+            # Malformed JWS / decode errors / etc.
+            log.warning("Apple JWS decode error: %s", e)
+            raise HTTPException(400, "Invalid purchase receipt")
+    log.warning(
+        "Apple JWS env mismatch on all verifiers (last=%s)",
+        last_exc.status.name if last_exc else "n/a",
+    )
+    raise HTTPException(400, "Invalid purchase receipt")
 
 router = APIRouter(prefix="/pairing", tags=["pairing"])
 
@@ -149,68 +252,104 @@ async def _send_code_email(to_email: str, code: str) -> bool:
 @router.post("/verify-purchase")
 @limiter.limit("10/minute")
 async def verify_purchase(request: Request, db: Connection = Depends(get_db)):
-    """Called after a RevenueCat consumable purchase to credit the user.
+    """Verify an Apple StoreKit 2 signed transaction (JWS) and credit the user.
 
-    Reads non-subscription transactions, inserts any new ones into
-    ``pairing_purchases`` (idempotent on store transaction id), and
-    increments ``users.pairing_credits`` by the number of newly-recorded
-    transactions. Returns the user's new credit total.
+    Body: ``{ platform, purchase_token, transaction_id, product_id }``
+
+    The JWS signature is verified locally against Apple's root CA (offline,
+    no API call). The decoded payload's bundleId and productId are checked
+    against expected values. Insertion into ``pairing_purchases`` is idempotent
+    on ``store_transaction_id`` so replaying the same JWS does not double-credit.
     """
-    import re
     uid = await _session_user_id(request, db)
     body = await request.json()
-    rc_user_id = body.get("rc_user_id", "")
+    platform = (body.get("platform") or "").lower()
+    purchase_token = (body.get("purchase_token") or "").strip()
+    product_id = body.get("product_id") or ""
 
-    # Sanitize rc_user_id to prevent SSRF path traversal
-    if rc_user_id and not re.match(r'^[\w\-:.$]+$', rc_user_id):
-        raise HTTPException(400, "Invalid user ID format")
+    if not purchase_token:
+        raise HTTPException(400, "Missing purchase token")
 
-    # Verify with RevenueCat API that this user actually purchased
-    rc_api_key = os.environ.get("REVENUECAT_API_KEY", "")
-    if not rc_api_key:
-        raise HTTPException(503, "Payment verification unavailable")
+    if platform != "ios":
+        # Android/Play receipt validation not implemented yet.
+        raise HTTPException(501, "Platform not supported")
 
-    import httpx
-    subscriber_id = rc_user_id or str(uid)
-    async with httpx.AsyncClient() as http:
-        resp = await http.get(
-            f"https://api.revenuecat.com/v1/subscribers/{subscriber_id}",
-            headers={"Authorization": f"Bearer {rc_api_key}"},
+    payload = _verify_apple_jws(purchase_token)
+
+    if payload.bundleId != IAP_BUNDLE_ID:
+        log.warning("Bundle id mismatch: %s", payload.bundleId)
+        raise HTTPException(400, "Invalid purchase: bundle mismatch")
+    if payload.productId != IAP_PRODUCT_ID:
+        log.warning("Product id mismatch: %s", payload.productId)
+        raise HTTPException(400, "Invalid purchase: product mismatch")
+    if product_id and product_id != payload.productId:
+        raise HTTPException(400, "Invalid purchase: product mismatch")
+
+    # The JWS carries the appAccountToken set at purchase time. We expect it
+    # to match the requesting user, but if it doesn't we don't reject blindly:
+    # cross-account replay is a normal scenario in StoreKit's queue (the user
+    # signed in with a different Venn account between buying and verifying),
+    # so we credit the original buyer instead of the requester. This still
+    # blocks credit theft — an attacker submitting a stranger's JWS can only
+    # ever credit the legitimate buyer, never themselves.
+    expected_token = iap_account_token_for(uid).lower()
+    actual_token = (payload.appAccountToken or "").lower()
+    if actual_token == expected_token:
+        crediting_uid = uid
+        cross_account = False
+    else:
+        target_uid = await _find_user_id_by_iap_token(db, actual_token)
+        if target_uid is None:
+            log.warning(
+                "appAccountToken does not match any user: session_uid=%s token=%s",
+                uid, actual_token,
+            )
+            raise HTTPException(403, "Purchase does not belong to this account")
+        log.warning(
+            "Cross-account purchase: session_uid=%s crediting target_uid=%s",
+            uid, target_uid,
         )
-        if resp.status_code != 200:
-            log.warning("RevenueCat verification failed: %s", resp.status_code)
-            raise HTTPException(502, "Could not verify purchase")
-        data = resp.json()
+        crediting_uid = target_uid
+        cross_account = True
 
-    subscriber = data.get("subscriber", {}) or {}
-    non_sub = subscriber.get("non_subscription_transactions", []) or []
-    relevant = [
-        t for t in non_sub
-        if t.get("product_id") == "lu.venn.pairingcode_v2"
-    ]
+    # Note: we accept both Sandbox and Production receipts. TestFlight builds
+    # always produce Sandbox receipts even after public release, and a real
+    # App Store install cannot emit a Sandbox receipt — sandbox testers are
+    # only honored by TestFlight/Xcode/dev builds. So there's no abuse vector
+    # to block here.
 
-    new_count = 0
-    for t in relevant:
-        store_tx_id = t.get("id")
-        product_id = t.get("product_id")
-        purchased_at = t.get("purchase_date") or ""
-        if not store_tx_id or not product_id:
-            continue
-        cur = await db.execute(
-            "INSERT OR IGNORE INTO pairing_purchases "
-            "(user_id, store_transaction_id, product_id, purchased_at) "
-            "VALUES (?, ?, ?, ?)",
-            (uid, store_tx_id, product_id, purchased_at),
-        )
-        if cur.rowcount and cur.rowcount > 0:
-            new_count += 1
+    store_tx_id = payload.transactionId
+    if not store_tx_id:
+        raise HTTPException(400, "Invalid purchase: missing transaction id")
+    purchased_at = (
+        datetime.fromtimestamp(payload.purchaseDate / 1000, tz=timezone.utc).isoformat()
+        if payload.purchaseDate
+        else datetime.now(timezone.utc).isoformat()
+    )
 
-    if new_count > 0:
+    cur = await db.execute(
+        "INSERT OR IGNORE INTO pairing_purchases "
+        "(user_id, store_transaction_id, product_id, purchased_at) "
+        "VALUES (?, ?, ?, ?)",
+        (crediting_uid, store_tx_id, payload.productId, purchased_at),
+    )
+    new_credit = cur.rowcount and cur.rowcount > 0
+
+    if new_credit:
         await db.execute(
-            "UPDATE users SET pairing_credits = pairing_credits + ? WHERE id = ?",
-            (new_count, uid),
+            "UPDATE users SET pairing_credits = pairing_credits + 1 WHERE id = ?",
+            (crediting_uid,),
         )
     await db.commit()
+
+    if cross_account:
+        # Credit went to the original buyer; tell the requester so the mobile
+        # client can stop replaying this transaction (finishTransaction).
+        return {
+            "credits": 0,
+            "credited_other_account": True,
+            "message": "This purchase was made on a different account. Sign in to that account to use the credit.",
+        }
 
     cur = await db.execute("SELECT pairing_credits FROM users WHERE id = ?", (uid,))
     row = await cur.fetchone()
@@ -369,4 +508,5 @@ async def pairing_status(request: Request, db: Connection = Depends(get_db)):
         "paired": bool(row and row["couple_id"]),
         "pairing_code": code,
         "pairing_credits": int(row["pairing_credits"]) if row and row["pairing_credits"] is not None else 0,
+        "iap_account_token": iap_account_token_for(uid),
     }

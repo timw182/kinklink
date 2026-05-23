@@ -2,7 +2,7 @@
   "expo": {
     "name": "Venn",
     "slug": "venn",
-    "version": "1.2.1",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -34,7 +34,6 @@
     "extra": {
       "apiBase": "https://api.venn.lu/api",
       "wsBase": "wss://api.venn.lu/api/ws",
-      "revenueCatApiKey": "appl_hBolFWiqmjQgIZrkJfyHgVsTVOX",
       "googleWebClientId": "886063776132-7bo868tgurc20c41b3gsio3aqbtgi10c.apps.googleusercontent.com",
       "googleIosClientId": "886063776132-65evedns0rsub3pj3lm45a7k3n0o17r6.apps.googleusercontent.com",
       "eas": {
@@ -46,20 +45,11 @@
       "expo-updates",
       "expo-secure-store",
       "expo-apple-authentication",
+      "expo-iap",
       [
         "@react-native-google-signin/google-signin",
         {
           "iosUrlScheme": "com.googleusercontent.apps.886063776132-65evedns0rsub3pj3lm45a7k3n0o17r6"
-        }
-      ],
-      [
-        "react-native-fbsdk-next",
-        {
-          "appID": "967351059111351",
-          "clientToken": "d10bd9852684a4182c56182aa7173db6",
-          "displayName": "Venn",
-          "scheme": "fb967351059111351",
-          "iosUrlScheme": "fb967351059111351"
         }
       ]
     ]
