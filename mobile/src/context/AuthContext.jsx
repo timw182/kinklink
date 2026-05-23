@@ -27,19 +27,29 @@ export function AuthProvider({ children }) {
   const [logoutReason, setLogoutReason] = useState(null);
 
   useEffect(() => {
+    let initialLoadDone = false;
+
+    // Force logout on any 401 from API calls. During the initial /auth/me
+    // probe, suppress the "session expired" banner — stale tokens from a
+    // previous install shouldn't greet a fresh app open with an error. Only
+    // surface the reason when the user was actively using the app.
+    setOnUnauthorized((reason) => {
+      setUser(null);
+      setIsSolo(false);
+      if (initialLoadDone) {
+        setLogoutReason(reason || 'session_expired');
+      }
+    });
+
     Promise.all([
       client.get('/auth/me').then((raw) => {
         const u = toUser(raw);
         if (u) setUser(u);
       }).catch(() => {}),
       AsyncStorage.getItem(SOLO_KEY).then((v) => { if (v) setIsSolo(true); }).catch(() => {}),
-    ]).finally(() => setLoading(false));
-
-    // Force logout on any 401 from API calls
-    setOnUnauthorized((reason) => {
-      setUser(null);
-      setIsSolo(false);
-      setLogoutReason(reason || 'session_expired');
+    ]).finally(() => {
+      setLoading(false);
+      initialLoadDone = true;
     });
   }, []);
 

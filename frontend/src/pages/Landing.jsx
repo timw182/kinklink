@@ -456,7 +456,7 @@ export default function Landing() {
             </svg>
           </a>
           <a
-            href="https://www.facebook.com/kernstudio.dev/"
+            href="https://www.facebook.com/profile.php?id=61590415018284"
             target="_blank"
             rel="noopener noreferrer"
             className="landing-footer-icon"
