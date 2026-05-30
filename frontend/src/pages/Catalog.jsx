@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import CategoryPicker from '../components/catalog/CategoryPicker';
 import CardStack from '../components/catalog/CardStack';
 import CardPile from '../components/catalog/CardPile';
+import MatchEffect from '../components/matches/MatchEffect';
+import PageLoader from '../components/shared/PageLoader';
 import { CATEGORIES, STORAGE_KEYS } from '../lib/constants';
 import client from '../api/client';
 import { useMatches } from '../context/MatchContext';
@@ -35,6 +37,9 @@ export default function Catalog() {
   const [lastResponse, setLastResponse]     = useState(null);
   const [confetti, setConfetti]             = useState([]);
   const [loadError, setLoadError]           = useState(false);
+  const [loading, setLoading]               = useState(true);
+  const [swipeTag, setSwipeTag]             = useState(null);
+  const swipeTagTimerRef                    = useRef(null);
 
   // Per-category piles
   const [recentYes, setRecentYes] = useState([]);
@@ -62,6 +67,7 @@ export default function Catalog() {
   // ── Data loading ────────────────────────────────────────────────────────────
   const loadCatalog = useCallback(() => {
     setLoadError(false);
+    setLoading(true);
     Promise.all([client.get('/catalog'), client.get('/catalog/responses')])
       .then(([items, resps]) => {
         setCatalog(items);
@@ -71,7 +77,8 @@ export default function Catalog() {
           return resps;
         });
       })
-      .catch(() => setLoadError(true));
+      .catch(() => setLoadError(true))
+      .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -215,6 +222,16 @@ export default function Catalog() {
     setMatchItem(null);
   }, []);
 
+  const handleSwipePopup = useCallback((response) => {
+    // CardStack fires onPopup(null) after its own short timeout — ignore it,
+    // we own the dismissal window via swipeTagTimerRef.
+    if (!response) return;
+    clearTimeout(swipeTagTimerRef.current);
+    const label = response === 'yes' ? '✓  Yes' : response === 'no' ? '✕  No' : '~  Maybe';
+    setSwipeTag({ id: `${response}:${Date.now()}`, label, response });
+    swipeTagTimerRef.current = setTimeout(() => setSwipeTag(null), 1200);
+  }, []);
+
   const showPiles = categoryItems.length > 0;
 
   // ── Pile counts (from full response history, not just recent) ───────────────
@@ -248,27 +265,7 @@ export default function Catalog() {
       {createPortal(
         <AnimatePresence>
           {matchItem && (
-            <motion.div
-              className="card-stack-match-overlay"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={handleMatchDismiss}
-              style={{ position: 'fixed', inset: 0, zIndex: 99998 }}
-            >
-              <motion.div
-                className="card-stack-match-content"
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.9, opacity: 0 }}
-                transition={{ type: 'spring', stiffness: 200, damping: 15 }}
-              >
-                <span className="card-stack-match-emoji">{matchItem.emoji}</span>
-                <h3 className="card-stack-match-title serif">It's a match</h3>
-                <p className="card-stack-match-item">{matchItem.title}</p>
-                <p className="card-stack-match-sub text-muted">You both want this</p>
-              </motion.div>
-            </motion.div>
+            <MatchEffect item={matchItem} onDismiss={handleMatchDismiss} />
           )}
         </AnimatePresence>,
         document.body,
@@ -281,11 +278,13 @@ export default function Catalog() {
         </div>
 
         <div className="catalog-category-row">
-          <CategoryPicker active={activeCategory} onChange={setActiveCategory} progress={progress} />
+          <CategoryPicker active={activeCategory} onChange={setActiveCategory} progress={progress} overlayTag={swipeTag} />
         </div>
 
         <div className="catalog-desktop-layout">
-          {loadError && catalog.length === 0 ? (
+          {loading && catalog.length === 0 ? (
+            <PageLoader label="Loading activities…" />
+          ) : loadError && catalog.length === 0 ? (
             <div className="catalog-error">
               <p className="text-muted">Couldn't load activities</p>
               <button className="btn btn-secondary" onClick={loadCatalog}>Retry</button>
@@ -299,6 +298,7 @@ export default function Catalog() {
                 items={categoryItems}
                 onRespond={handleRespond}
                 onUndo={lastResponse ? handleUndo : null}
+                onPopup={handleSwipePopup}
               />
 
               {showPiles && <CardPile items={recentYes} side="yes" totalCount={pileCount.yes} />}

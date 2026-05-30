@@ -140,6 +140,12 @@ async def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_expressions_couple_id
                 ON expressions(couple_id, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_users_couple_id
+                ON users(couple_id);
+
+            CREATE INDEX IF NOT EXISTS idx_catalog_items_category
+                ON catalog_items(category);
         """)
         await db.commit()
 

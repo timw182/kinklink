@@ -8,6 +8,8 @@ const MatchContext = createContext(null);
 const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/api/ws`;
 const RECONNECT_BASE = 2000;
 const RECONNECT_MAX  = 30000;
+const PING_INTERVAL  = 25000;  // send keepalive every 25s
+const PONG_TIMEOUT   = 10000;  // declare the socket dead if no pong within 10s
 
 export function MatchProvider({ children }) {
   const { user, setUser } = useAuth();
@@ -16,6 +18,7 @@ export function MatchProvider({ children }) {
   const [resetState, setResetState]       = useState("none"); // none | pending_mine | pending_partner
   const [partnerMood, setPartnerMood]       = useState(null);
   const [partnerMessage, setPartnerMessage] = useState(null);
+  const [partnerExpression, setPartnerExpression] = useState(null);
   const [swipeAlert, setSwipeAlert]         = useState(null);
   const timerRef    = useRef(null);
   const wsRef       = useRef(null);
@@ -83,6 +86,15 @@ export function MatchProvider({ children }) {
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
 
+    // Keepalive timers, scoped to this socket so onclose can clear them
+    let pingInterval = null;
+    let pongTimeout  = null;
+    const clearKeepalive = () => {
+      clearInterval(pingInterval);
+      clearTimeout(pongTimeout);
+      pingInterval = pongTimeout = null;
+    };
+
     ws.onopen = () => {
       const isReconnect = retryRef.current > 0;
       retryRef.current = 0;
@@ -95,14 +107,20 @@ export function MatchProvider({ children }) {
           fetchMood(),
         ]);
       }
-      // Keepalive ping every 25s
-      const ping = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send("ping");
-        else clearInterval(ping);
-      }, 25000);
+      // Keepalive: ping every 25s; if no pong (or any message) within 10s the
+      // socket is dead even though readyState still reads OPEN — force-close to reconnect.
+      pingInterval = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN) return clearKeepalive();
+        ws.send("ping");
+        clearTimeout(pongTimeout);
+        pongTimeout = setTimeout(() => ws.close(), PONG_TIMEOUT);
+      }, PING_INTERVAL);
     };
 
     ws.onmessage = (event) => {
+      // Any inbound traffic proves liveness; clear the pending pong timeout.
+      clearTimeout(pongTimeout);
+      if (event.data === "pong") return;
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === "match" && msg.item) {
@@ -118,6 +136,17 @@ export function MatchProvider({ children }) {
         } else if (msg.type === "mood_update" || msg.type === "mood_cleared") {
           if (msg.from_user_id !== userRef.current?.id) {
             setPartnerMood(msg.mood || null);
+          }
+        } else if (msg.type === "expression") {
+          // Skip echoes of our own sends; sender already got immediate UI feedback
+          if (msg.from_user_id !== userRef.current?.id) {
+            setPartnerExpression({
+              id: msg.id,
+              key: msg.key,
+              sender_id: msg.from_user_id,
+              sent_at: msg.sent_at,
+              ts: Date.now(),  // nonce so toast/chat re-fire on repeat sends
+            });
           }
         } else if (msg.type === "swipe_pattern_alert") {
           if (msg.about_user_id !== userRef.current?.id) {
@@ -137,6 +166,7 @@ export function MatchProvider({ children }) {
           setLatestNewMatch(null);
           setPartnerMood(null);
           setPartnerMessage(null);
+          setPartnerExpression(null);
           setSwipeAlert(null);
           setResetState("none");
           knownIds.current.clear();
@@ -147,11 +177,14 @@ export function MatchProvider({ children }) {
     };
 
     ws.onclose = () => {
+      clearKeepalive();
       // If wsRef was replaced/cleared (intentional cleanup), don't reconnect
       if (wsRef.current !== ws) return;
       if (!userRef.current?.coupleId) return;
-      // Exponential backoff reconnect
-      const delay = Math.min(RECONNECT_BASE * 2 ** retryRef.current, RECONNECT_MAX);
+      // Exponential backoff with full jitter (50–100% of the ceiling) so reconnects
+      // don't stampede the server when it comes back up.
+      const ceiling = Math.min(RECONNECT_BASE * 2 ** retryRef.current, RECONNECT_MAX);
+      const delay = ceiling * (0.5 + Math.random() * 0.5);
       retryRef.current++;
       retryTimer.current = setTimeout(connect, delay);
     };
@@ -188,7 +221,7 @@ export function MatchProvider({ children }) {
   const newMatchCount = matches.filter((m) => !m.seen).length;
 
   return (
-    <MatchContext.Provider value={{ matches, setMatches, latestNewMatch, newMatchCount, dismissLatest, refetch, resetState, setResetState, partnerMood, setPartnerMood, partnerMessage, swipeAlert, setSwipeAlert }}>
+    <MatchContext.Provider value={{ matches, setMatches, latestNewMatch, newMatchCount, dismissLatest, refetch, resetState, setResetState, partnerMood, setPartnerMood, partnerMessage, partnerExpression, setPartnerExpression, swipeAlert, setSwipeAlert }}>
       {children}
     </MatchContext.Provider>
   );
